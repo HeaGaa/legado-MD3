@@ -6,15 +6,7 @@ on:
       branch:
         description: '要构建的分支'
         required: true
-        default: 'trae/solo-agent-vhkVM3'
-      product:
-        description: '产品变体：appCore 基础版无本地引擎，appComic 漫画增强版内置本地 OCR/擦除/气泡检测'
-        required: true
-        type: choice
-        options:
-          - appCore
-          - appComic
-        default: appCore
+        default: 'core-only'
 
 permissions:
   contents: write
@@ -23,15 +15,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      PRODUCT: ${{ github.event.inputs.product }}
-      PRODUCT_TAG: "${{ github.event.inputs.product == 'appComic' && 'comic' || 'core' }}"
+      PRODUCT: appCore
+      PRODUCT_TAG: core
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event.inputs.branch }}
           fetch-depth: 0
-          submodules: true
+          submodules: false
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -57,9 +49,7 @@ jobs:
       - name: Build Debug APK
         run: |
           chmod +x gradlew
-          # appCore -> AppCore：Gradle 变体任务名是驼峰形式
-          PRODUCT_CAP=$(echo "$PRODUCT" | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
-          ./gradlew assemble${PRODUCT_CAP}Debug -PenableAbiSplits=false --no-daemon --no-configuration-cache
+          ./gradlew assembleAppCoreDebug -PenableAbiSplits=true --no-daemon --no-configuration-cache
         env:
           COMMIT_NUMBER: ${{ github.run_number }}
           APP_VERSION_NAME: debug-${{ github.run_number }}
@@ -71,7 +61,7 @@ jobs:
           ls -la "$APK_PATH" || true
           APK_COUNT=$(find "$APK_PATH" -maxdepth 1 -name "*.apk" | wc -l | tr -d ' ')
           if [ "$APK_COUNT" -ne 1 ]; then
-            echo "预期生成 1 个 universal APK，实际生成 $APK_COUNT 个！"
+            echo "预期生成 1 个 arm64-v8a APK，实际生成 $APK_COUNT 个！"
             exit 1
           fi
 
@@ -79,7 +69,7 @@ jobs:
         run: |
           APK_PATH="$GITHUB_WORKSPACE/app/build/outputs/apk/${{ env.PRODUCT }}/debug"
           cd "$APK_PATH"
-          mv -- *.apk "legado-debug-${GITHUB_RUN_NUMBER}-${PRODUCT_TAG}-universal.apk"
+          mv -- *.apk "legado-debug-${GITHUB_RUN_NUMBER}-${PRODUCT_TAG}-arm64-v8a.apk"
           ls -la
 
       - name: Create ZIP Archive

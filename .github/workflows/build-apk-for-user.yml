@@ -49,7 +49,7 @@ jobs:
       - name: Build Debug APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleAppCoreDebug -PenableAbiSplits=false --no-daemon --no-configuration-cache
+          ./gradlew assembleAppCoreDebug -PenableAbiSplits=true --no-daemon --no-configuration-cache
         env:
           COMMIT_NUMBER: ${{ github.run_number }}
           APP_VERSION_NAME: debug-${{ github.run_number }}
@@ -61,7 +61,7 @@ jobs:
           ls -la "$APK_PATH" || true
           APK_COUNT=$(find "$APK_PATH" -maxdepth 1 -name "*.apk" | wc -l | tr -d ' ')
           if [ "$APK_COUNT" -ne 1 ]; then
-            echo "预期生成 1 个 universal APK，实际生成 $APK_COUNT 个！"
+            echo "预期生成 1 个 arm64-v8a APK，实际生成 $APK_COUNT 个！"
             exit 1
           fi
 
@@ -69,7 +69,7 @@ jobs:
         run: |
           APK_PATH="$GITHUB_WORKSPACE/app/build/outputs/apk/${{ env.PRODUCT }}/debug"
           cd "$APK_PATH"
-          mv -- *.apk "legado-debug-${GITHUB_RUN_NUMBER}-${PRODUCT_TAG}-universal.apk"
+          mv -- *.apk "legado-debug-${GITHUB_RUN_NUMBER}-${PRODUCT_TAG}-arm64-v8a.apk"
           ls -la
 
       - name: Create ZIP Archive

@@ -265,6 +265,266 @@ dependencies {
     implementation(libs.glide.okhttp)
     ksp(libs.glide.ksp)
     implementation(libs.androidsvg)
+import java.io.FileInputStream
+import java.util.Properties
+
+plugins {
+    alias(libs.plugins.compose.compiler)
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.aboutlibraries.android)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.room)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.google.services)
+    alias(libs.plugins.baselineprofile)
+}
+
+apply(from = "download.gradle")
+apply(from = "mochi-compat.gradle")
+
+aboutLibraries {
+    collect {
+        configPath = file("aboutlibraries")
+    }
+}
+
+
+val versionPropsFile = file("version.properties")
+val versionProps = Properties().apply {
+    if (versionPropsFile.exists()) {
+        load(FileInputStream(versionPropsFile))
+    }
+}
+
+val versionMajor = versionProps["VERSION_MAJOR"]?.toString()?.toInt() ?: 0
+val versionMinor = versionProps["VERSION_MINOR"]?.toString()?.toInt() ?: 0
+val versionPatch = versionProps["VERSION_PATCH"]?.toString()?.toInt() ?: 0
+val appName = "legado"
+val projectVersionName = "$versionMajor.$versionMinor.$versionPatch"
+val enableAbiSplits = providers.gradleProperty("enableAbiSplits")
+    .map(String::toBoolean)
+    .getOrElse(true)
+
+android {
+    // Compose 1.13.0-beta01 的 AAR 元数据要求 compileSdk >= 37.1（android-37.0 会被 checkAarMetadata 拒绝）。
+    compileSdk = 37
+    compileSdkMinor = 1
+    namespace = "io.legado.app"
+
+    signingConfigs {
+        if (project.hasProperty("RELEASE_STORE_FILE")) {
+            create("myConfig") {
+                storeFile = file(project.property("RELEASE_STORE_FILE") as String)
+                storePassword = project.property("RELEASE_STORE_PASSWORD") as String
+                keyAlias = project.property("RELEASE_KEY_ALIAS") as String
+                keyPassword = project.property("RELEASE_KEY_PASSWORD") as String
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
+            }
+        }
+    }
+
+    defaultConfig {
+        applicationId = "io.legato.kazusa"
+        minSdk = 26
+        targetSdk = 37
+        versionCode = System.getenv("COMMIT_NUMBER")?.toInt()?.let { 10000 + it } ?: 32640
+        versionName = System.getenv("APP_VERSION_NAME") ?: projectVersionName
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "Cronet_Version", "\"${project.findProperty("CronetVersion")}\"")
+        buildConfigField(
+            "String",
+            "Cronet_Main_Version",
+            "\"${project.findProperty("CronetMainVersion")}\""
+        )
+
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments += mapOf(
+                    "room.incremental" to "true",
+                    "room.expandProjection" to "true",
+                    "room.schemaLocation" to "$projectDir/schemas"
+                )
+            }
+        }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+        viewBinding = true
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (project.hasProperty("RELEASE_STORE_FILE")) {
+                signingConfig = signingConfigs.getByName("myConfig")
+            }
+            manifestPlaceholders["app_name"] = "@string/app_name"
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+                "cronet-proguard-rules.pro"
+            )
+        }
+        create("noR8") {
+            initWith(getByName("release"))
+            isMinifyEnabled = false
+            isShrinkResources = false
+            matchingFallbacks += listOf("release")
+            versionNameSuffix = "-noR8"
+        }
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            if (project.hasProperty("RELEASE_STORE_FILE")) {
+                signingConfig = signingConfigs.getByName("myConfig")
+            }
+            manifestPlaceholders["app_name"] = "@string/app_name"
+            versionNameSuffix = "_debug"
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+                "cronet-proguard-rules.pro"
+            )
+        }
+    }
+
+    splits {
+        abi {
+            isEnable = enableAbiSplits
+            reset()
+            include("armeabi-v7a", "arm64-v8a")
+            isUniversalApk = true
+        }
+    }
+
+    // 维度顺序决定变体名：appCoreDebug。
+    flavorDimensions += listOf("mode", "engine")
+    productFlavors {
+        create("app") {
+            dimension = "mode"
+            manifestPlaceholders["APP_CHANNEL_VALUE"] = "app"
+        }
+        // 基础产品：不含本地推理运行时与内置模型；云端 OCR、AI 识图/翻译保持可用。
+        create("core") {
+            dimension = "engine"
+            buildConfigField("boolean", "MANGA_LOCAL_ENGINE", "false")
+        }
+    }
+
+    compileOptions {
+        isCoreLibraryDesugaringEnabled = true
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    packaging {
+        resources.excludes.add("META-INF/*")
+    }
+
+    sourceSets {
+        getByName("androidTest").assets.directories.add("$projectDir/schemas")
+    }
+
+    lint {
+        baseline = file("lint-baseline.xml")
+        checkDependencies = true
+        // UnusedResources 在基线里占 1223/1621 条、12218 行（全文件的 75%），几乎全是
+        // 跟随上游时留下的资源；release 本来就开了精确资源压缩，它们不会进 APK。
+        // 关掉它让基线只剩真正值得盯的那部分，新增问题照样报红。
+        disable += "UnusedResources"
+    }
+
+    testOptions {
+        unitTests {
+            // 阅读器核心在构造期就读字符串资源（TextPageFactory 的 keepSwipeTip、
+            // TextPage 的默认 text/title、ReadView 的无障碍动作名）。不打开这个，
+            // Robolectric 下取任何 R.string 都是 Resources$NotFoundException，
+            // 整条阅读器测试线（Track D·D1c）就起不来。
+            isIncludeAndroidResources = true
+        }
+    }
+}
+
+kotlin {
+    jvmToolchain {
+        languageVersion.set(JavaLanguageVersion.of(21))
+    }
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
+}
+
+ksp {
+    arg("room.incremental", "true")
+    arg("room.expandProjection", "true")
+    arg("room.generateKotlin", "false")
+}
+
+dependencies {
+    implementation(libs.androidx.profileinstaller)
+    "baselineProfile"(project(":baselineprofile"))
+    coreLibraryDesugaring(libs.desugar)
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(libs.bundles.androidTest)
+    implementation(libs.kotlin.stdlib)
+    implementation(libs.kotlinx.collections.immutable)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.bundles.coroutines)
+    implementation(libs.core.ktx)
+    implementation(libs.appcompat.appcompat)
+    implementation(libs.activity.ktx)
+    implementation(libs.fragment.ktx)
+    implementation(libs.preference.ktx)
+    implementation(libs.androidx.constraintlayout)
+    implementation(libs.androidx.swiperefreshlayout)
+    implementation(libs.androidx.recyclerview)
+    implementation(libs.androidx.viewpager2)
+    implementation(libs.androidx.webkit)
+    implementation(libs.material)
+    implementation(libs.flexbox)
+    implementation(libs.gson)
+    implementation(libs.lifecycle.common.java8)
+    implementation(libs.lifecycle.service)
+    implementation(libs.media.media)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
+    implementation(libs.media3.exoplayer.dash)
+    implementation(libs.media3.datasource.okhttp)
+    implementation(libs.media3.ui)
+    implementation(libs.splitties.appctx)
+    implementation(libs.splitties.systemservices)
+    implementation(libs.splitties.views)
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+    androidTestImplementation(libs.room.testing)
+    implementation(libs.liveeventbus)
+    implementation(libs.jsoup)
+    implementation(libs.json.path)
+    implementation(libs.jsoupxpath)
+    implementation(libs.intellij.markdown)
+    implementation(project(":modules:book"))
+    implementation(project(":modules:rhino"))
+    implementation(libs.okhttp)
+    implementation(fileTree(mapOf("dir" to "cronetlib", "include" to listOf("*.jar", "*.aar"))))
+    implementation(libs.protobuf.javalite)
+    implementation(libs.glide.glide)
+    implementation(libs.glide.okhttp)
+    ksp(libs.glide.ksp)
+    implementation(libs.androidsvg)
     implementation(libs.glide.svg)
     implementation(libs.glide.recyclerview)
     implementation(libs.ktor.server.core)
@@ -317,13 +577,6 @@ dependencies {
     implementation(libs.telephoto.zoomable.image.coil3)
     implementation(libs.accompanist.webview)
     implementation(libs.kotlinx.coroutines.android)
-    // Bundled recognizers work without Google Play Services or first-use downloads.
-    // 仅 comic（漫画增强版）内置；core 用 UnavailableMangaLocalEngine 装配，依赖图里不得出现这些库。
-    "comicImplementation"(libs.onnxruntime.android)
-    "comicImplementation"("com.google.mlkit:text-recognition:${libs.versions.mlkitText.get()}")
-    "comicImplementation"("com.google.mlkit:text-recognition-japanese:${libs.versions.mlkitText.get()}")
-    "comicImplementation"("com.google.mlkit:text-recognition-chinese:${libs.versions.mlkitText.get()}")
-    "comicImplementation"("com.google.mlkit:text-recognition-korean:${libs.versions.mlkitText.get()}")
     implementation(libs.kotlinx.datetime)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.viewmodel.navigation3)
@@ -373,5 +626,8 @@ dependencies {
 // 同一套代码会在不同批次的类上随机报错。隔离与串行是这类用例成立的前提。
 tasks.withType<Test>().configureEach {
     forkEvery = 1
+    maxParallelForks = 1
+}
+= 1
     maxParallelForks = 1
 }

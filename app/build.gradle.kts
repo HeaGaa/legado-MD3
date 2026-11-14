@@ -94,8 +94,10 @@ android {
 
     buildTypes {
         getByName("release") {
-            if (project.hasProperty("RELEASE_STORE_FILE")) {
-                signingConfig = signingConfigs.getByName("myConfig")
+            signingConfig = if (project.hasProperty("RELEASE_STORE_FILE")) {
+                signingConfigs.getByName("myConfig")
+            } else {
+                signingConfigs.getByName("debug")
             }
             manifestPlaceholders["app_name"] = "@string/app_name"
             isMinifyEnabled = true
@@ -133,12 +135,12 @@ android {
         abi {
             isEnable = enableAbiSplits
             reset()
-            include("armeabi-v7a", "arm64-v8a")
-            isUniversalApk = true
+            include("arm64-v8a")
+            isUniversalApk = false
         }
     }
 
-    // 维度顺序决定变体名：appCoreDebug / appComicDebug。
+    // 维度顺序决定变体名：appCoreDebug。
     flavorDimensions += listOf("mode", "engine")
     productFlavors {
         create("app") {
@@ -149,13 +151,6 @@ android {
         create("core") {
             dimension = "engine"
             buildConfigField("boolean", "MANGA_LOCAL_ENGINE", "false")
-        }
-        // 漫画增强版：内置 ML Kit、ONNX Runtime、气泡模型和本地引擎装配。
-        // 产品标记与变体名统一用 comic，不再叫 full——它相对 core 多的就是漫画本地翻译能力。
-        create("comic") {
-            dimension = "engine"
-            buildConfigField("boolean", "MANGA_LOCAL_ENGINE", "true")
-            proguardFile("proguard-manga-engine.pro")
         }
     }
 
@@ -317,13 +312,6 @@ dependencies {
     implementation(libs.telephoto.zoomable.image.coil3)
     implementation(libs.accompanist.webview)
     implementation(libs.kotlinx.coroutines.android)
-    // Bundled recognizers work without Google Play Services or first-use downloads.
-    // 仅 comic（漫画增强版）内置；core 用 UnavailableMangaLocalEngine 装配，依赖图里不得出现这些库。
-    "comicImplementation"(libs.onnxruntime.android)
-    "comicImplementation"("com.google.mlkit:text-recognition:${libs.versions.mlkitText.get()}")
-    "comicImplementation"("com.google.mlkit:text-recognition-japanese:${libs.versions.mlkitText.get()}")
-    "comicImplementation"("com.google.mlkit:text-recognition-chinese:${libs.versions.mlkitText.get()}")
-    "comicImplementation"("com.google.mlkit:text-recognition-korean:${libs.versions.mlkitText.get()}")
     implementation(libs.kotlinx.datetime)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.viewmodel.navigation3)
